@@ -576,8 +576,12 @@ def _link_commands_from_skills(
     if not skills_dir.is_dir():
         return [f"  - commands/ (skills directory not found)"]
 
-    # Collect all SKILL.md files
-    skill_files = list(skills_dir.rglob("SKILL.md"))
+    # Collect all SKILL.md files. ``rglob`` will not descend into symlinked
+    # directories, and skills_dir is a tree of per-skill symlinks, so glob the
+    # two depths the namespace logic below handles instead.
+    skill_files = sorted(
+        set(skills_dir.glob("*/SKILL.md")) | set(skills_dir.glob("*/*/SKILL.md"))
+    )
     if not skill_files:
         return [f"  - commands/ (no skills found)"]
 
