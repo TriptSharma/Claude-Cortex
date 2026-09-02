@@ -714,25 +714,62 @@ def _migrate_dir_symlink(dst: Path, src: Path, category: str) -> List[str]:
     return results
 
 
+def _discover_skill_dirs(src: Path) -> List[Tuple[str, Path]]:
+    """Collect ``(link_name, skill_dir)`` pairs from a skills directory.
+
+    ``skills/`` mixes flat skills (``skills/foo/SKILL.md``) with category
+    directories holding skills one level deeper
+    (``skills/collaboration/pre_mortem/SKILL.md``). Claude Code only discovers
+    skills directly below ``skills/``, so nested skills are linked flat
+    alongside the rest, with snake_case directory names hyphenated to match
+    their front-matter ``name``.
+    """
+    def is_skill(path: Path) -> bool:
+        # Dot-prefixed directories (.system, .template) are scaffolding, not
+        # installable content.
+        return (
+            path.is_dir()
+            and not path.name.startswith(".")
+            and (path / "SKILL.md").exists()
+        )
+
+    top_level = [e for e in sorted(src.iterdir()) if e.is_dir() and not e.name.startswith(".")]
+    flat = [(e.name, e) for e in top_level if is_skill(e)]
+    nested = [
+        (child.name.replace("_", "-"), child)
+        for entry in top_level
+        if not is_skill(entry)
+        for child in sorted(entry.iterdir())
+        if is_skill(child)
+    ]
+
+    # Flat skills are collected first so they win any name collision with a
+    # skill nested under a category directory.
+    found: List[Tuple[str, Path]] = []
+    seen = set()
+    for link_name, skill_dir in flat + nested:
+        if link_name in seen:
+            continue
+        seen.add(link_name)
+        found.append((link_name, skill_dir))
+    return found
+
+
 def _link_files_into_dir(
     src: Path, dst: Path, category: str, force: bool = False
 ) -> List[str]:
     """Create per-file symlinks from ``src/`` into ``dst/``.
 
     - ``agents`` and ``rules``: iterate ``*.md`` files (and subdirs for rules)
-    - ``skills``: iterate subdirectories containing ``SKILL.md``
+    - ``skills``: iterate skill directories via ``_discover_skill_dirs``
     """
     results: List[str] = []
     created = 0
     skipped = 0
 
     if category == "skills":
-        for skill_dir in sorted(src.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            if not (skill_dir / "SKILL.md").exists():
-                continue
-            link_path = dst / skill_dir.name
+        for link_name, skill_dir in _discover_skill_dirs(src):
+            link_path = dst / link_name
             if link_path.is_symlink():
                 if link_path.resolve() == skill_dir.resolve():
                     skipped += 1
